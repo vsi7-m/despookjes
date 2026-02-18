@@ -105,7 +105,7 @@ class ReflexCaptureAgent(CaptureAgent):
         successor = game_state.generate_successor(self.index, action)
         pos = successor.get_agent_state(self.index).get_position()
         if pos != nearest_point(pos):
-            # Only half a grid position was covered
+            # Only half a grid position was covered     # Hoe kan dit????
             return successor.generate_successor(self.index, action)
         else:
             return successor
@@ -158,6 +158,9 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
 
     def get_weights(self, game_state, action):
         return {'successor_score': 100, 'distance_to_food': -1}
+    
+    # Minimaliseert het aantal food dots id successor state
+    # Minimaliseert de kortste afstand naar een (dichtsbijzijnde) food dot
 
 
 class DefensiveReflexAgent(ReflexCaptureAgent):
