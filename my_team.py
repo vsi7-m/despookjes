@@ -105,7 +105,7 @@ class ReflexCaptureAgent(CaptureAgent):
         successor = game_state.generate_successor(self.index, action)
         pos = successor.get_agent_state(self.index).get_position()
         if pos != nearest_point(pos):
-            # Only half a grid position was covered     # Hoe kan dit????
+            # Only half a grid position was covered     # Hoe kan dit???? Accepteren
             return successor.generate_successor(self.index, action)
         else:
             return successor
@@ -118,7 +118,7 @@ class ReflexCaptureAgent(CaptureAgent):
         weights = self.get_weights(game_state, action)
         return features * weights
 
-    def get_features(self, game_state, action):
+    def get_features(self, game_state, action): # Hier wat features aan toevoegen
         """
         Returns a counter of features for the state
         """
@@ -127,7 +127,7 @@ class ReflexCaptureAgent(CaptureAgent):
         features['successor_score'] = self.get_score(successor)
         return features
 
-    def get_weights(self, game_state, action):
+    def get_weights(self, game_state, action): # Ideale weights zoeken met ML???!!!!
         """
         Normally, weights do not depend on the game state.  They can be either
         a counter or a dictionary.
@@ -135,7 +135,7 @@ class ReflexCaptureAgent(CaptureAgent):
         return {'successor_score': 1.0}
 
 
-class OffensiveReflexAgent(ReflexCaptureAgent):
+class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Approximate Agent (code lijkt daar beetje op)
     """
   A reflex agent that seeks food. This is an agent
   we give you to get an idea of what an offensive agent might look like,
@@ -145,18 +145,42 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
     def get_features(self, game_state, action):
         features = util.Counter()
         successor = self.get_successor(game_state, action)
+
         food_list = self.get_food(successor).as_list()
+        capsule_list = self.get_capsules(successor)
+        ghost_list = [successor.get_agent_state(ghost) for ghost in self.get_opponents(successor)]
+        ghost_within_5_list = [ghost for ghost in ghost_list if ghost.get_position() is not None] # Gelijkaardige code als bij Defensive
+
+        agent = successor.get_agent_state(self.index)
+        my_pos = agent.get_position()
+        
         features['successor_score'] = -len(food_list)  # self.get_score(successor)
+        features['inventory_space'] = successor.get_agent_state(self.index).num_carrying
+        # features['distance_to_home'] = self.get_maze_distance(my_pos, ...) mogelijke feature voor toekomst, moet nog toegevoegd idk hoe
 
         # Compute distance to the nearest food
-
         if len(food_list) > 0:  # This should always be True,  but better safe than sorry
-            my_pos = successor.get_agent_state(self.index).get_position()
-            min_distance = min([self.get_maze_distance(my_pos, food) for food in food_list])
-            features['distance_to_food'] = min_distance
+            min_food_distance = min([self.get_maze_distance(my_pos, food) for food in food_list])
+            features['distance_to_food'] = min_food_distance
+
+        # Compute distance to the nearest capsule (lekker voor als de ghost dichtbij is)
+        min_capsule_distance = min([self.get_maze_distance(my_pos, capsule) for capsule in capsule_list])
+        features['distance_to_capsule'] = min_capsule_distance
+        
+        # Compute distance to the nearest ghost within Manhattan distance 5
+        if len(ghost_within_5_list) > 0:
+            min_ghost_distance = min([self.get_maze_distance(my_pos, ghost.get_position()) for ghost in ghost_within_5_list])
+            features['distance_to_ghost'] = min_ghost_distance
+            
+        # Nu alleen nog maar de distance binnen die 5 geïmplementeerd, maar daarbuiten moeten we de noisy distance 
+        # gebruiken met game_state.get_agent_distances, maar noisy distance neemt de manhattan distance en die is niet zo goed
+        # want die houdt geen rekening met muren dus idk hoe ik verder moest
+
+        # Hier kan ook de feature van de slides erbij van "is Pacman in a tunnel" 0 of 1 aangeven of de actie pacman zal trappen 
+        
         return features
 
-    def get_weights(self, game_state, action):
+    def get_weights(self, game_state, action): # Moet nog weights zoeken voor de features die ik heb toegevoegd
         return {'successor_score': 100, 'distance_to_food': -1}
     
     # Minimaliseert het aantal food dots id successor state
@@ -180,12 +204,15 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
 
         # Computes whether we're on defense (1) or offense (0)
         features['on_defense'] = 1
-        if my_state.is_pacman: features['on_defense'] = 0
+        if my_state.is_pacman: features['on_defense'] = 0 # Interessanttttttt dyanmische agent?
 
         # Computes distance to invaders we can see
         enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
         invaders = [a for a in enemies if a.is_pacman and a.get_position() is not None]
         features['num_invaders'] = len(invaders)
+
+        # We kunnen hier nog een feature toevoegen dat ipv dat de agent random rondloopt, kan hij de plaats met meeste food bewaken
+
         if len(invaders) > 0:
             dists = [self.get_maze_distance(my_pos, a.get_position()) for a in invaders]
             features['invader_distance'] = min(dists)
