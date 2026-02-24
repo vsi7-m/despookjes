@@ -23,6 +23,8 @@
 import random
 import util
 
+import math
+
 from capture_agents import CaptureAgent
 from game import Directions
 from util import nearest_point
@@ -105,7 +107,7 @@ class ReflexCaptureAgent(CaptureAgent):
         successor = game_state.generate_successor(self.index, action)
         pos = successor.get_agent_state(self.index).get_position()
         if pos != nearest_point(pos):
-            # Only half a grid position was covered     # Hoe kan dit???? Accepteren
+            # Only half a grid position was covered     # Hoe kan dit???? Accepteren => Arno wist het zelf niet maar is vgm voor edge case dus boeie
             return successor.generate_successor(self.index, action)
         else:
             return successor
@@ -148,15 +150,28 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
 
         food_list = self.get_food(successor).as_list()
         capsule_list = self.get_capsules(successor)
-        ghost_list = [successor.get_agent_state(ghost) for ghost in self.get_opponents(successor)]
-        ghost_within_5_list = [ghost for ghost in ghost_list if ghost.get_position() is not None] # Gelijkaardige code als bij Defensive
+        opponents_list = [successor.get_agent_state(opponent) for opponent in self.get_opponents(successor)]
+        ghost_within_5_list = [ghost for ghost in opponents_list if (not ghost.is_pacman) and (ghost.get_position() is not None)] # Gelijkaardige code als bij Defensive
 
         agent = successor.get_agent_state(self.index)
         my_pos = agent.get_position()
         
-        features['successor_score'] = -len(food_list)  # self.get_score(successor)
-        features['inventory_space'] = successor.get_agent_state(self.index).num_carrying
-        # features['distance_to_home'] = self.get_maze_distance(my_pos, ...) mogelijke feature voor toekomst, moet nog toegevoegd idk hoe
+
+        # Om food op te eten
+        features['remaining_food'] = len(food_list)  # self.get_score(successor)
+
+
+        width = game_state.data.layout.width
+        height = game_state.data.layout.height
+        middle = width // 2
+        if self.red:
+            middle = middle - 1 # middle is het einde van ons eigen territorium, dus waar pacman terug een spookje wordt
+        #else: middle = middle + 1 
+        # Niet 100% zeker dat de berekening van middle helemaal klopt maar denk dat het goed is
+        middle_positions = [(middle, h) for h in range(1, height) if not game_state.has_wall(middle, h)] # Als je maze distance berekent met een positie waar een wall is wordt blijkbaar een error gethrowd
+        distances_to_home = [self.get_maze_distance(my_pos, pos) for pos in middle_positions] 
+        features['distance_to_home'] = min(distances_to_home) # Kortste pad naar positie waar we weer ghost worden
+
 
         # Compute distance to the nearest food
         if len(food_list) > 0:  # This should always be True,  but better safe than sorry
@@ -164,27 +179,44 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
             features['distance_to_food'] = min_food_distance
 
         # Compute distance to the nearest capsule (lekker voor als de ghost dichtbij is)
-        min_capsule_distance = min([self.get_maze_distance(my_pos, capsule) for capsule in capsule_list])
-        features['distance_to_capsule'] = min_capsule_distance
+        if len(capsule_list) > 0:
+            min_capsule_distance = min([self.get_maze_distance(my_pos, capsule) for capsule in capsule_list])
+            if min_capsule_distance <= 10:
+                features['distance_to_capsule'] = min_capsule_distance
+        # We moeten dan ook reward geven om een capsule te eten, anders wordt na het eten de afstand tot een andere capsule plots kei groot waardoor pacman de capsule niet wilt eten
+        # => Dit blijft een probleem, wrs lukt het wel met de juiste weights maar moeilijk om te vinden
+        features['remaining_capsules'] = len(capsule_list)
         
         # Compute distance to the nearest ghost within Manhattan distance 5
-        if len(ghost_within_5_list) > 0:
+        if len(ghost_within_5_list) > 0 and ghost_within_5_list[0].scared_timer == 0: # Als de ghosts scared zijn hoeven we er niet van weg te gaan (maar mss als de timer net gedaan gaat zijn wel, kunnen we nog verbeteren)
             min_ghost_distance = min([self.get_maze_distance(my_pos, ghost.get_position()) for ghost in ghost_within_5_list])
             features['distance_to_ghost'] = min_ghost_distance
+        
             
         # Nu alleen nog maar de distance binnen die 5 geïmplementeerd, maar daarbuiten moeten we de noisy distance 
         # gebruiken met game_state.get_agent_distances, maar noisy distance neemt de manhattan distance en die is niet zo goed
         # want die houdt geen rekening met muren dus idk hoe ik verder moest
+        # => Op zich als de ghost meer dan 5 verwijderd is hoeven we er ons helemaal geen zorgen over te maken, pas 
+        # als die dichter komt moeten we weglopen. Dus mss hoeven we vr de offensive agent die noisy distance niet eens te gebruiken.
 
         # Hier kan ook de feature van de slides erbij van "is Pacman in a tunnel" 0 of 1 aangeven of de actie pacman zal trappen 
         
         return features
 
-    def get_weights(self, game_state, action): # Moet nog weights zoeken voor de features die ik heb toegevoegd
-        return {'successor_score': 100, 'distance_to_food': -1}
-    
-    # Minimaliseert het aantal food dots id successor state
-    # Minimaliseert de kortste afstand naar een (dichtsbijzijnde) food dot
+    def get_weights(self, game_state, action):
+        successor = self.get_successor(game_state, action)
+        inventory_space = successor.get_agent_state(self.index).num_carrying
+        distance_to_home_weight = -inventory_space # Hoe meer food we dragen, hoe meer we een verre afstand van ons eigen veld afstraffen
+        # Dus wnr we veel food dragen kiest pacman voor acties die hem terug nr huis brengen => zo kan de food die hij draagt ingecasht worden voor punten
+        # We kunnen deze berekening ook doen bij de features om zo de weight constant te houden (vb. -1), is mss beter
+
+        return {'remaining_food': -200, # Minimaliseer resterende food (dus eet food)
+                'distance_to_food': -4, # Minimaliseer afstand naar de dichtste food dot
+                'distance_to_home': distance_to_home_weight, # Probeer naar huis te gaan wnr je veel food draagt
+                #'distance_to_capsule': -2, # Ik krijg het niet echt goed met die capsules, plots staat hij vaak stil enzo.
+                #'remaining_capsules': -30, # Dus mss beter voor later houden en eerst gwn simpel beginnen zonder capsules
+                'distance_to_ghost': 100} # Verhoog afstand met ghost die maar op afstand van 5 of minder is
+    # De weights kunnen wrs nog veel beter
 
 
 class DefensiveReflexAgent(ReflexCaptureAgent):
@@ -206,12 +238,42 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         features['on_defense'] = 1
         if my_state.is_pacman: features['on_defense'] = 0 # Interessanttttttt dyanmische agent?
 
-        # Computes distance to invaders we can see
+        # Computes distance to invaders we can see # Ik denk dat dit enkel rekening houdt met invaders die within 5 squares zijn
         enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
         invaders = [a for a in enemies if a.is_pacman and a.get_position() is not None]
         features['num_invaders'] = len(invaders)
+        # Hier is het vgm ook belangrijk om naar enemies te kijken die verder zijn (dus met noisy distance)
 
         # We kunnen hier nog een feature toevoegen dat ipv dat de agent random rondloopt, kan hij de plaats met meeste food bewaken
+        food_to_defend = self.get_food_you_are_defending(game_state).as_list()
+        dists = [self.get_maze_distance(my_pos, food_pos) for food_pos in food_to_defend]
+        features['sum_distance_to_food'] = sum(dists)
+
+        
+        # Deze feature is om zo dicht mogelijk bij de grens van rood en blauw te blijven.
+        # Ofwel is de pacman al geïnfiltreerd, maar dan moet hij nog terug om punten te verdienen.
+        # Als we bij de grens op hem wachten kunnen we hem makkelijk vangen.
+        # Ofwel moet hij ons territorium nog binnenkomen. Dan kunnen we hem meteen vangen.
+        # Ik heb deze getest en heb het gevoel dat da echt nog goe kan zijn.
+        # Ook voor een meer dynamische agent is da mss goed want dan is hij al dicht bij het territorium van de tegenstander
+        # en kan hij af en toe food gaan stelen mss
+        width = game_state.data.layout.width
+        height = game_state.data.layout.height
+        middle = width // 2
+        if self.red:
+            middle = middle - 1 # middle is het einde van ons eigen territorium, dus waar pacman terug een spookje wordt
+        #else: middle = middle + 1 
+        # Niet 100% zeker dat de berekening van middle helemaal klopt maar denk dat het goed is
+        middle_positions = [(middle, h) for h in range(1, height) if not game_state.has_wall(middle, h)] # Als je maze distance berekent met een positie waar een wall is wordt blijkbaar een error gethrowd
+        # number_of_entry_points = len(middle_positions)   
+        distances_to_home = [self.get_maze_distance(my_pos, pos) for pos in middle_positions] 
+        features['distances_to_home'] = sum(distances_to_home) # / number_of_entry_points 
+        # Als er minder entry points zijn in ons gebied is het meer de moeite waard om daar dicht bij te blijven. Maar dat maakt het nogal ingewikkeld.
+
+
+
+        # Feature idee: met capsules rekening houden (wnr de tegenstander er een heeft gegeten)
+
 
         if len(invaders) > 0:
             dists = [self.get_maze_distance(my_pos, a.get_position()) for a in invaders]
@@ -224,4 +286,10 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         return features
 
     def get_weights(self, game_state, action):
-        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2}
+        return {'num_invaders': -1000,
+                'on_defense': 100,
+                'invader_distance': -20,
+                'stop': -2, # Ik heb de weight voor stop veel lager gezet want vgm is da voor de defensieve niet zo erg om te stil te staan
+                'reverse': -2,
+                'sum_distance_to_food': -0.1,
+                'distances_to_home': -0.1} 
