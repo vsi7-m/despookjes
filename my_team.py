@@ -355,6 +355,10 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         dists = [self.get_maze_distance(my_pos, food_pos) for food_pos in food_to_defend]
         features['sum_distance_to_food'] = sum(dists)
 
+        capsules_to_defend = self.get_capsules_you_are_defending(successor)
+        if len(capsules_to_defend) > 0:
+            features['distance_to_capsule'] = min([self.get_maze_distance(my_pos, capsule) for capsule in capsules_to_defend])
+
         
         # Deze feature is om zo dicht mogelijk bij de grens van rood en blauw te blijven.
         # Ofwel is de pacman al geïnfiltreerd, maar dan moet hij nog terug om punten te verdienen.
@@ -363,6 +367,8 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         # Ik heb deze getest en heb het gevoel dat da echt nog goe kan zijn.
         # Ook voor een meer dynamische agent is da mss goed want dan is hij al dicht bij het territorium van de tegenstander
         # en kan hij af en toe food gaan stelen mss
+        # ECHT SLIMM!!!!
+
         walls = game_state.get_walls()
         width = walls.width
         height = walls.height
@@ -370,21 +376,19 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         if self.red:
             middle = middle - 1 # middle is het einde van ons eigen territorium, dus waar pacman terug een spookje wordt
         #else: middle = middle + 1 
-        # Niet 100% zeker dat de berekening van middle helemaal klopt maar denk dat het goed is
         middle_positions = [(middle, h) for h in range(height) if not game_state.has_wall(middle, h)] # Als je maze distance berekent met een positie waar een wall is wordt blijkbaar een error gethrowd
         # number_of_entry_points = len(middle_positions)   
         distances_to_home = [self.get_maze_distance(my_pos, pos) for pos in middle_positions] 
-        features['distances_to_home'] = sum(distances_to_home) # / number_of_entry_points 
+        features['distance_to_closest_boundary'] = min(distances_to_home) # / number_of_entry_points 
+        # Die sum is misschien te veel berekeningen doen wanneer we maar 1 seconde compute tijd hebben
         # Als er minder entry points zijn in ons gebied is het meer de moeite waard om daar dicht bij te blijven. Maar dat maakt het nogal ingewikkeld.
-
-
-
-        # Feature idee: met capsules rekening houden (wnr de tegenstander er een heeft gegeten)
-
 
         if len(invaders) > 0:
             dists = [self.get_maze_distance(my_pos, a.get_position()) for a in invaders]
-            features['invader_distance'] = min(dists)
+            if my_state.scared_timer > 0:
+                features['invader_distance_while_scared'] = 1 / min(dists) 
+            else:
+                features['invader_distance'] = min(dists)
 
         if action == Directions.STOP: features['stop'] = 1
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
@@ -396,7 +400,9 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         return {'num_invaders': -1000,
                 'on_defense': 100,
                 'invader_distance': -20,
+                'invader_distance_while_scared': -100,
                 'stop': -2, # Ik heb de weight voor stop veel lager gezet want vgm is da voor de defensieve niet zo erg om te stil te staan
                 'reverse': -2,
                 'sum_distance_to_food': -0.1,
-                'distances_to_home': -0.1} 
+                'distance_to_capsule': -1,
+                'distance_to_closest_boundary': -0.1} 
