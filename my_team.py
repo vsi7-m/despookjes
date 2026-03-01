@@ -102,14 +102,14 @@ class ReflexCaptureAgent(CaptureAgent):
                     entrance = curr
                     break # om uit de while loop te gaan
 
-                tunnel_coords.append(curr) # coördinaten van de tunnel
+                tunnel_coords.append((curr, depth)) # coördinaten van de tunnel
                 next_coord = [coord for coord in neighbours if coord != prev][0]
                 prev = curr
                 curr = next_coord
                 depth += 1
 
             for coord, depth in tunnel_coords:
-                self.dead_end_tunnels[coord] = entrance
+                self.dead_end_tunnels[coord] = (entrance, depth)
 
 
 
@@ -281,11 +281,11 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
         features["dead_end_tunnel"] = 0
 
         if my_pos in self.dead_end_tunnels:
-            entrance = self.dead_end_tunnels[my_pos]
+            entrance, depth = self.dead_end_tunnels[my_pos]
 
-            pacman_dist_to_entrance = self.get_maze_distance(my_pos, entrance)
+            successor_dist_to_entrance = self.get_maze_distance(my_pos, entrance)
             current_dist_to_entrance = self.get_maze_distance(current_pos, entrance)
-            escaping = pacman_dist_to_entrance < current_dist_to_entrance
+            escaping = successor_dist_to_entrance < current_dist_to_entrance
             
             for opponent in opponents_list:
                 if opponent.is_pacman or opponent.scared_timer > 0:
@@ -296,13 +296,11 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
                     continue # We gaan verder met de volgende opponent in de list want deze opponent is te ver
                 
                 ghost_dist_to_entrance = self.get_maze_distance(ghost_pos, entrance)
-                
-                if ghost_dist_to_entrance <= pacman_dist_to_entrance + 3 and not escaping: # + 3 zodat pacman niet een tunnel ingaat wanneer een ghost hem achtervolgt (we kunnen ipv +3 de depth gebruiken om de buffer preciezer te berekenen)
+                if ghost_dist_to_entrance <= successor_dist_to_entrance + depth and not escaping: # + depth zodat pacman niet een tunnel ingaat wanneer een ghost hem achtervolgt
                     features["dead_end_tunnel"] = 1
                     break # Als 1 ghost ons gaat killen in de tunnel, zijn we dood en is de loop klaar
 
         # We moeten sws nog een feature toepassen dat onze attacker rondgaat als hij heel de tijd de enemy tegenkomt langs dezelfde kant
-
         return features
 
     def get_weights(self, game_state, action):
