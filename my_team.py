@@ -220,8 +220,6 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
         middle = width // 2
         if self.red:
             middle = middle - 1 # middle is het einde van ons eigen territorium, dus waar pacman terug een spookje wordt
-        #else: middle = middle + 1 
-        # Berekening klopt denk ik wel
         middle_positions = [(middle, h) for h in range(1, height) if not game_state.has_wall(middle, h)] # Als je maze distance berekent met een positie waar een wall is wordt blijkbaar een error gethrowd
         distances_to_home = [self.get_maze_distance(my_pos, pos) for pos in middle_positions] 
         features['distance_to_home'] = min(distances_to_home) # Kortste pad naar positie waar we weer ghost worden
@@ -236,8 +234,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
             min_capsule_distance = min([self.get_maze_distance(my_pos, capsule) for capsule in capsule_list])
             if min_capsule_distance <= 10:
                 features['distance_to_capsule'] = min_capsule_distance
-        # We moeten dan ook reward geven om een capsule te eten, anders wordt na het eten de afstand tot een andere capsule plots kei groot waardoor pacman de capsule niet wilt eten
-        # => Dit blijft een probleem, wrs lukt het wel met de juiste weights maar moeilijk om te vinden
+            else: features['distance_to_capsule'] = 11 # Anders zal die altijd verder dan 10 willen blijven omdat er geen negatieve reward is
         features['remaining_capsules'] = len(capsule_list)
 
         # Doodgaan is heel slechttt (dat wist pacman niet als hij zat in de tunnel, hij begon daar gewoon te chillen)
@@ -313,13 +310,13 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
         return {'remaining_food': -200, # Minimaliseer resterende food (dus eet food)
                 'distance_to_food': -4, # Minimaliseer afstand naar de dichtste food dot
                 'distance_to_home': distance_to_home_weight, # Probeer naar huis te gaan wnr je veel food draagt
-                #'distance_to_capsule': -2, # Ik krijg het niet echt goed met die capsules, plots staat hij vaak stil enzo.
-                #'remaining_capsules': -30, # Dus mss beter voor later houden en eerst gwn simpel beginnen zonder capsules
+                'distance_to_capsule': -2,
+                'remaining_capsules': -301,
                 'distance_to_ghost': -100, # Hoe dichter de ghost van die 5 distance, hoe negatiever de q-value 
                 'distance_to_scared_ghost': -8, # Zodat als hij de kans krijgt, dat hij die wel echt neemt
                 'ate_scared_ghost': 500,
                 'death': -10000, 
-                'dead_end_tunnel': -10000} # Nu weet hij zeker dat dit een slechte state is
+                'dead_end_tunnel': -10001} # Nu weet hij zeker dat dit een slechte state is
     # De weights kunnen wrs nog veel beter !
 
 
@@ -372,8 +369,7 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         height = walls.height
         middle = width // 2
         if self.red:
-            middle = middle - 1 # middle is het einde van ons eigen territorium, dus waar pacman terug een spookje wordt
-        #else: middle = middle + 1 
+            middle = middle - 1 # middle is het einde van ons eigen territorium, dus waar pacman terug een spookje wordt 
         middle_positions = [(middle, h) for h in range(height) if not game_state.has_wall(middle, h)] # Als je maze distance berekent met een positie waar een wall is wordt blijkbaar een error gethrowd
         # number_of_entry_points = len(middle_positions)   
         distances_to_home = [self.get_maze_distance(my_pos, pos) for pos in middle_positions] 
@@ -387,6 +383,12 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
                 features['invader_distance_while_scared'] = 1 / min(dists) 
             else:
                 features['invader_distance'] = min(dists)
+        else: # len(invaders)=0 dus mogelijke invaders zijn op manhattan afstand > 5
+            noisy_distances = successor.get_agent_distances()
+            opp_indices = self.get_opponents(successor)
+            #far_invaders = [i for i in opp_indices if successor.get_agent_state(i).is_pacman]
+            noisy_distances = [noisy_distances[i] for i in opp_indices]
+            features['far_invader_distance'] = min(noisy_distances)
 
         if action == Directions.STOP: features['stop'] = 1
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
@@ -399,6 +401,7 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
                 'on_defense': 100,
                 'invader_distance': -20,
                 'invader_distance_while_scared': -100,
+                'far_invader_distance': -10, # door de noisyness is dit denk ik eig niet zo nuttig, bijna de helft vd tijd geeft dit een verkeerde suggestie
                 'stop': -2, # Ik heb de weight voor stop veel lager gezet want vgm is da voor de defensieve niet zo erg om te stil te staan
                 'reverse': -2,
                 'sum_distance_to_food': -0.1,
