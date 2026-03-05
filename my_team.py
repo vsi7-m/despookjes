@@ -272,7 +272,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
             features['distance_to_capsule'] = min_capsule_distance
             # else: features['distance_to_capsule'] = 11 # Anders zal die altijd verder dan 10 willen blijven omdat er geen negatieve reward is
             # in plaats van die 11 gewoon de weight verlagen van capsule? want is beetje hardcoded
-        # features['remaining_capsules'] = len(capsule_list)
+        features['remaining_capsules'] = len(capsule_list)
 
         # Doodgaan is heel slechttt (dat wist pacman niet als hij zat in de tunnel, hij begon daar gewoon te chillen)
         current_pos = game_state.get_agent_state(self.index).get_position()
@@ -371,7 +371,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
                 'distance_to_food': -4, # Minimaliseer afstand naar de dichtste food dot
                 'distance_to_home': distance_to_home_weight, # Probeer naar huis te gaan wnr je veel food draagt
                 'distance_to_capsule': -2,
-                # 'remaining_capsules': -301,
+                'remaining_capsules': -301,
                 'invader_distance': -8,
                 'ate_invader': 500,
                 'distance_to_ghost': -100, # Hoe dichter de ghost van die 5 distance, hoe negatiever de q-value 
