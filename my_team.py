@@ -82,74 +82,59 @@ class ReflexCaptureAgent(CaptureAgent):
             neighbours = [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
             return [pos for pos in neighbours if not game_state.has_wall(pos[0], pos[1])]
 
-        dead_ends = []
+        free_neighbours = {}
         for x in range(width):
             for y in range(height):
                 if not game_state.has_wall(x, y):
-                    neighbours = get_free_neighbours((x, y))
-                    if len(neighbours) == 1:
-                        dead_ends.append((x, y))
+                    free_neighbours[(x, y)] = len(get_free_neighbours((x, y)))
         
-        for end in dead_ends:
-            curr = end
-            prev = None
-            depth = 1 # lengte van de tunnel
-            tunnel_coords = []
-        
-            while True:
-                neighbours = get_free_neighbours(curr)
-                if len(neighbours) > 2: 
-                    entrance = curr
-                    break # om uit de while loop te gaan
+        queue = [pos for pos, n in free_neighbours.items() if n == 1] # Beginnen met uiterste dead-ends
 
-                tunnel_coords.append((curr, depth)) # coördinaten van de tunnel
-                next_coord = [coord for coord in neighbours if coord != prev][0]
-                prev = curr
-                curr = next_coord
-                depth += 1
+        to_exit = {}
 
-            for coord, depth in tunnel_coords:
-                self.dead_end_tunnels[coord] = (entrance, depth)
+        while len(queue) > 0: 
+            curr = queue.pop() # Neem de dead-ends stuk voor stuk
+            active_neighbours = [n for n in get_free_neighbours(curr) if free_neighbours[n] > 0]
+            if len(active_neighbours) == 0: # Zoek de neighbour die nog niet gecheckt is
+                continue
+                
+            parent = active_neighbours[0] # Weg naar de uitgang
+            to_exit[curr] = parent
+            free_neighbours[curr] = 0 
+            free_neighbours[parent] -= 1 # Doe dit weg
 
-    '''def is_specials(x, y): # Om rare dead-ends ook te herkennen met meerdere entrances
-            coords = [
-                [(x-1, y), (x, y), (x+1, y), (x, y+1)],
-                [(x-1, y), (x, y), (x+1, y), (x, y-1)],
-                [(x, y-1), (x, y), (x, y+1), (x-1, y)],
-                [(x, y-1), (x, y), (x, y+1), (x+1, y)]
-            ]
+            if free_neighbours[parent] == 1: # Als neighbour/parent ook dead-end is geworden, voeg toe aan queue
+                    queue.append(parent)
+            
+        for coord in to_exit.keys(): 
+            curr = coord
+            path = []
+                
+            while curr in to_exit: # Volg het pad tot we bij een non-dead end aankomen
+                path.append(curr)
+                curr = to_exit[curr]
+                    
+            entrance = curr
+            depth = len(path) # Lengte van pad is diepte van de entrance die meerdere tunnels bevat
+            self.dead_end_tunnels[coord] = (entrance, depth)
 
-            for triangle in coords:
-                has_triangle = True
-                for pos in triangle:
-                    if game_state.has_wall(pos[0], pos[1]):
-                        has_triangle = False
 
-                if has_triangle:
-                    return triangle
-            return None # voor in de toekomst want idk hoe dit moet
-
-        for x in range(width):
-            for y in range(height):
-                triangle = is_specials(x, y) 
-                if triangle is not None:
-                    neighbours = get_free_neighbours(pos)
-
-                    count_openings = 0
-                    entrance = None
-                    for neighbour in neighbours:
-                        if not game_state.has_wall(neighbour[0], neighbour[1]):
-                            if get_free_neighbours(neighbour) > 1:
-                                count_openings += 1
-                                entrance = neighbour
-                    if count_openings > 1:
-                        continue
-                    else:
-                        for pos in triangle:
-                            self.dead_end_tunnels[pos] = (entrance, 3)
-        '''
+        self.last_defended_food = self.get_food_you_are_defending(game_state).as_list()
+        self.missing_food_dot = None
 
     def choose_action(self, game_state):
+        current_defended_food = self.get_food_you_are_defending(game_state).as_list()
+        if len(self.last_defended_food) > len(current_defended_food):
+            missing_food = list(set(self.last_defended_food) - set(current_defended_food)) # Lijst van missing food
+            if len(missing_food) > 0:
+                self.missing_food_dot = missing_food[0] # Naar eerste missing food dot gaan
+        self.last_defended_food = current_defended_food 
+    
+        my_pos = game_state.get_agent_state(self.index).get_position()
+        if self.missing_food_dot == my_pos: # Als er geen enemy is bij missing food dot, dan gaan we terug
+            # Als de enemy al gekillt is onderweg, gaat hij nog steeds naar die food dot, maar dat moet niet per se 
+            # tenzij ze twee attackers hebben die exact hetzelfde doen ofzo, maar denk dat hij al kan teruggaan als hij een kill heeft gemaakt
+            self.missing_food_dot = None
         """
         Picks among the actions with the highest Q(s,a).
         """
@@ -226,21 +211,20 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
     def get_features(self, game_state, action):
         features = util.Counter()
         successor = self.get_successor(game_state, action)
-
         food_list = self.get_food(successor).as_list()
         capsule_list = self.get_capsules(successor)
         opponents_list = [successor.get_agent_state(opponent) for opponent in self.get_opponents(successor)]
         ghost_within_5_list = [
             ghost 
             for ghost in opponents_list
-            if (not ghost.is_pacman) and
+            if not ghost.is_pacman and
             ghost.get_position() is not None and 
             ghost.scared_timer == 0
         ] # Misschien beter als we zo typen wanneer tekst niet meer op het scherm past?
         scared_ghosts_list = [
             ghost 
             for ghost in opponents_list
-            if (not ghost.is_pacman) and
+            if not ghost.is_pacman and
             ghost.get_position() is not None and 
             ghost.scared_timer > 0
         ]
@@ -321,7 +305,13 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
                 if my_pos == ghost.get_position():
                     features['ate_scared_ghost'] = 1
 
-        
+        features['final_sprint'] = 0
+        current_agent_state = game_state.get_agent_state(self.index)
+        if agent.is_pacman and current_agent_state.num_carrying > 0:
+            moves_left = game_state.data.timeleft // 4 # Kon geen getter vinden voor deze gamestatedata, // 4 omdat het totale tijd is van alle 4 agents
+            min_home_dist = min(distances_to_home)
+            if moves_left <= min_home_dist + 5: # +5 tijd geven voor als er een ghost in de weg zit naar huis
+                features['final_sprint'] = min_home_dist
             
         # Nu alleen nog maar de distance binnen die 5 geïmplementeerd, maar daarbuiten moeten we de noisy distance 
         # gebruiken met game_state.get_agent_distances, maar noisy distance neemt de manhattan distance en die is niet zo goed
@@ -363,9 +353,24 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
     def get_weights(self, game_state, action):
         successor = self.get_successor(game_state, action)
         inventory_space = successor.get_agent_state(self.index).num_carrying
-        distance_to_home_weight = -inventory_space # Hoe meer food we dragen, hoe meer we een verre afstand van ons eigen veld afstraffen
-        # Dus wnr we veel food dragen kiest pacman voor acties die hem terug nr huis brengen => zo kan de food die hij draagt ingecasht worden voor punten
-        # We kunnen deze berekening ook doen bij de features om zo de weight constant te houden (vb. -1), is mss beter
+        food_list = self.get_food(game_state).as_list()
+ 
+        # Dit hieronder toegevoegd zodat als hij een kill maakt, hij niet instant naar huis gaat om zijn food binnen te brengen,
+        # maar eerst nog zoveel mogelijk food gaat halen
+        opponents_list = [successor.get_agent_state(opponent) for opponent in self.get_opponents(successor)]
+        ghost_within_5_list = [
+            ghost 
+            for ghost in opponents_list
+            if not ghost.is_pacman and
+            ghost.get_position() is not None and 
+            ghost.scared_timer == 0
+        ]
+        if len(ghost_within_5_list) > 0 and inventory_space > 0:
+            distance_to_home_weight = -(inventory_space * 2) # Als we food hebben en ghost is dichtbij, snel naar huis
+        elif inventory_space >= len(food_list) - 2: # Naar huis gaan wanneer we max food hebben om te winnen
+            distance_to_home_weight = -5 # Net iets meer dan distance_to_food 
+        else: 
+            distance_to_home_weight = 0 # Niemand in de buurt, dus zoveel mogelijk eten
 
         return {'remaining_food': -200, # Minimaliseer resterende food (dus eet food)
                 'distance_to_food': -4, # Minimaliseer afstand naar de dichtste food dot
@@ -377,6 +382,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
                 'distance_to_ghost': -100, # Hoe dichter de ghost van die 5 distance, hoe negatiever de q-value 
                 'distance_to_scared_ghost': -2, # Zodat als hij de kans krijgt, dat hij die wel echt neemt
                 'ate_scared_ghost': 500,
+                'final_sprint': -10000,
                 'death': -10000, 
                 'dead_end_tunnel': -10001, # Nu weet hij zeker dat dit een slechte state is
                 'stop': -2, # zodat hij een manier vindt om rond te gaan wanneer hij blijft cirkelen met de enemy bij de border
@@ -400,8 +406,8 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         my_pos = my_state.get_position()
 
         # Computes whether we're on defense (1) or offense (0)
-        features['on_defense'] = 1
-        if my_state.is_pacman: features['on_defense'] = 0 # Interessanttttttt dyanmische agent?
+        # features['on_defense'] = 1
+        # if my_state.is_pacman: features['on_defense'] = 0 # Interessanttttttt dyanmische agent?
 
         # Computes distance to invaders we can see # Ik denk dat dit enkel rekening houdt met invaders die within 5 squares zijn
         enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
@@ -440,18 +446,32 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         features['distance_to_closest_boundary'] = min(distances_to_home) # / number_of_entry_points 
         # Die sum is misschien te veel berekeningen doen wanneer we maar 1 seconde compute tijd hebben
         # Als er minder entry points zijn in ons gebied is het meer de moeite waard om daar dicht bij te blijven. Maar dat maakt het nogal ingewikkeld.
+        # Als er misschien 1 entry point is, kunnen we dat wel echt blijven bewaken !!!
+
+        # Voor die speciale crowdedCapture map kan hij nu snel door enemy territory gaan en een defender blijven
+        features['enemy_territory_depth'] = 0
+        if my_state.is_pacman:
+            features['enemy_territory_depth'] = min(distances_to_home)
 
         if len(invaders) > 0:
+            self.missing_food_dot = None
             dists = [self.get_maze_distance(my_pos, a.get_position()) for a in invaders]
+            min_dist = min(dists)
             if my_state.scared_timer > 0:
-                features['invader_distance_while_scared'] = 1 / min(dists) 
+                if my_state.scared_timer <= 2: # Als de scared timer bijna op is, willen we de enemy killen
+                    features['invader_distance'] = min_dist
+                else: # Anders blijven we op 3 afstand om hem daarna zo snel mogelijk te kunnen killen
+                    features['invader_distance_while_scared'] = abs(min_dist - 3)
             else:
-                features['invader_distance'] = min(dists)
-        else: # len(invaders)=0 dus mogelijke invaders zijn op manhattan afstand > 5
+                features['invader_distance'] = min_dist
+            '''else: # len(invaders)=0 dus mogelijke invaders zijn op manhattan afstand > 5
             noisy_distances = successor.get_agent_distances()
             opp_indices = self.get_opponents(successor)
             far_invaders = [noisy_distances[i] for i in opp_indices if successor.get_agent_state(i).is_pacman]
-            features['far_invader_distance'] = min(noisy_distances)
+            features['far_invader_distance'] = min(noisy_distances)'''
+        else:
+            if self.missing_food_dot is not None:
+                features['distance_to_missing_food'] = self.get_maze_distance(my_pos, self.missing_food_dot)
 
         features['ate_invader'] = 0
         current_opponents = [game_state.get_agent_state(opponent) for opponent in self.get_opponents(game_state)]
@@ -470,10 +490,12 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
 
     def get_weights(self, game_state, action):
         return {'num_invaders': -1000,
-                'on_defense': 100,
+                # 'on_defense': 100,
+                'enemy_territory_depth': -2,
                 'invader_distance': -20,
                 'invader_distance_while_scared': -100,
-                'far_invader_distance': -10, # door de noisyness is dit denk ik eig niet zo nuttig, bijna de helft vd tijd geeft dit een verkeerde suggestie
+                # 'far_invader_distance': -10, # door de noisyness is dit denk ik eig niet zo nuttig, bijna de helft vd tijd geeft dit een verkeerde suggestie
+                'distance_to_missing_food': -5,
                 'ate_invader': 500,
                 'stop': -2, # Ik heb de weight voor stop veel lager gezet want vgm is da voor de defensieve niet zo erg om te stil te staan
                 'reverse': -2,
