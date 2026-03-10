@@ -35,7 +35,7 @@ from util import nearest_point
 #################
 
 def create_team(first_index, second_index, is_red,
-                first='OffensiveReflexAgent', second='DefensiveReflexAgent', num_training=0):
+                first='DynamicReflexAgent', second='DynamicReflexAgent', num_training=0):
     """
     This function should return a list of two agents that will form the
     team, initialized using firstIndex and secondIndex as their agent
@@ -50,6 +50,7 @@ def create_team(first_index, second_index, is_red,
     any extra arguments, so you should make sure that the default
     behavior is what you want for the nightly contest.
     """
+     
     return [eval(first)(first_index), eval(second)(second_index)]
 
 
@@ -502,3 +503,67 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
                 'sum_distance_to_food': -0.1,
                 'distance_to_capsule': -1,
                 'distance_to_closest_boundary': -0.1} 
+    
+
+
+
+
+    
+class DynamicReflexAgent(ReflexCaptureAgent):
+    # Klasse variabelen (gemeenschappelijk voor alle instanties)
+    shared_roles = {}   # { agent_index: 'offensive' | 'defensive' }
+    team_indices = []   # [first_index, second_index], geinitialiseerd in register_initial_state
+
+    def register_initial_state(self, game_state):
+       super().register_initial_state(game_state)
+
+       self.prev_pos = self.start # Altijd vorige positie bijhouden
+
+       # Registreer in index list
+       DynamicReflexAgent.team_indices.append(self.index)
+
+        # Geef de rollen:
+        # eerste agent → offensive, tweede → defensive
+       if len(DynamicReflexAgent.shared_roles) == 0:
+            DynamicReflexAgent.shared_roles[self.index] = 'offensive'
+       else:
+            DynamicReflexAgent.shared_roles[self.index] = 'defensive'
+
+
+    # Kan wrs ook met andere methoden maar dit is nog wel simpel op zich
+    def _get_teammate_index(self):
+        for idx in DynamicReflexAgent.team_indices:
+            if idx != self.index:
+                return idx
+
+    # Swapt de rollen. We kunnen ook methode schrijven die gwn voor 1 agent de rol veranderd zodat ze bvb. allebei offensive worden
+    def _swap_roles(self):
+        """Called wnr de agent sterft. Deze wordt dan defensive; teammate wordt offensive."""
+        DynamicReflexAgent.shared_roles[self.index] = 'defensive'
+        teammate = self._get_teammate_index()
+        DynamicReflexAgent.shared_roles[teammate] = 'offensive'
+
+    def choose_action(self, game_state):
+        my_pos = game_state.get_agent_state(self.index).get_position()
+
+        # Death detection (dood als agent respawnt bij start)
+        if (my_pos == self.start and
+            self.prev_pos != self.start and
+            DynamicReflexAgent.shared_roles.get(self.index) == 'offensive'):
+            self._swap_roles()
+
+        self.prev_pos = my_pos
+        return super().choose_action(game_state)
+
+    # Nu gebruiken we rechtstreeks onze andere bestaande klassen, maar als we die niet meer gebruiken kan alle code in deze klasse (is conceptueel dan logischer)
+    def get_features(self, game_state, action):
+        if DynamicReflexAgent.shared_roles.get(self.index) == 'offensive':
+            return OffensiveReflexAgent.get_features(self, game_state, action)
+        else:
+            return DefensiveReflexAgent.get_features(self, game_state, action)
+
+    def get_weights(self, game_state, action):
+        if DynamicReflexAgent.shared_roles.get(self.index) == 'offensive':
+            return OffensiveReflexAgent.get_weights(self, game_state, action)
+        else:
+            return DefensiveReflexAgent.get_weights(self, game_state, action)
