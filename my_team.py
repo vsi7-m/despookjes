@@ -343,6 +343,17 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
                 if ghost_dist_to_entrance <= successor_dist_to_entrance + depth and not escaping: # + depth zodat pacman niet een tunnel ingaat wanneer een ghost hem achtervolgt
                     features["dead_end_tunnel"] = 1
                     break # Als 1 ghost ons gaat killen in de tunnel, zijn we dood en is de loop klaar
+        
+        # Niet kunnen testen met domme baseline :')
+        features['teammate_distance_penalty'] = 0 # Zodat onze twee attackers niet dezelfde richting op gaan
+        teammates = [game_state.get_agent_state(i) for i in self.get_team(successor) if i != self.index]
+        
+        for teammate in teammates:
+            if teammate.get_position() is not None:
+                dist = self.get_maze_distance(my_pos, teammate.get_position())
+                if dist <= 3:
+                    features['teammate_distance_penalty'] = 1
+
 
         if action == Directions.STOP: features['stop'] = 1
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
@@ -383,6 +394,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
                 'distance_to_ghost': -100, # Hoe dichter de ghost van die 5 distance, hoe negatiever de q-value 
                 'distance_to_scared_ghost': -2, # Zodat als hij de kans krijgt, dat hij die wel echt neemt
                 'ate_scared_ghost': 500,
+                #'teammate_distance_penalty': -15,
                 'final_sprint': -10000,
                 'death': -10000, 
                 'dead_end_tunnel': -10001, # Nu weet hij zeker dat dit een slechte state is
@@ -483,6 +495,18 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
                     if my_pos == invader.get_position():
                         features['ate_invader'] = 1
 
+        features['wrong_defender_side'] = 0 # Verdelen de twee defenders over de bovenste en onderste helft
+        if len(invaders) == 0 and self.missing_food_dot is None:
+            my_team = self.get_team(successor)
+            top_defender = (self.index == min(my_team))
+            middle_height = height // 2
+            _, y = my_pos
+            
+            if top_defender and y < middle_height: # Als ik de top defender ben, maar ik zit op de onderste helft
+                features['wrong_defender_side'] = 1
+            elif not top_defender and y >= middle_height: # Als ik de bottom defender ben, maar ik zit op de bovenste helft
+                features['wrong_defender_side'] = 1
+
         if action == Directions.STOP: features['stop'] = 1
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
         if action == rev: features['reverse'] = 1
@@ -501,13 +525,11 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
                 'stop': -2, # Ik heb de weight voor stop veel lager gezet want vgm is da voor de defensieve niet zo erg om te stil te staan
                 'reverse': -2,
                 'sum_distance_to_food': -0.1,
-                'distance_to_capsule': -1,
-                'distance_to_closest_boundary': -0.1} 
+                'distance_to_capsule': -0.2,
+                'distance_to_closest_boundary': -1,
+                # 'wrong_defender_side': -10
+                } 
     
-
-
-
-
     
 class DynamicReflexAgent(ReflexCaptureAgent):
     # Klasse variabelen (gemeenschappelijk voor alle instanties)
@@ -515,18 +537,21 @@ class DynamicReflexAgent(ReflexCaptureAgent):
     team_indices = []   # [first_index, second_index], geinitialiseerd in register_initial_state
 
     def register_initial_state(self, game_state):
-       super().register_initial_state(game_state)
+        if len(DynamicReflexAgent.team_indices) >= 2: # meerdere games worden met 1 python commando gerunt, dus onze team_indices lijst wordt nooit gerest
+            DynamicReflexAgent.team_indices = []      # omdat het klassevariabelen zijn, blijven die altijd in memory en bouwt die lijst op
+            DynamicReflexAgent.shared_roles = {}      # bv. game 1: team_indices = [0,2]; game 2: team_indices = [0, 2, 0, 2] ...  
+        super().register_initial_state(game_state)
 
-       self.prev_pos = self.start # Altijd vorige positie bijhouden
+        self.prev_pos = self.start # Altijd vorige positie bijhouden
 
-       # Registreer in index list
-       DynamicReflexAgent.team_indices.append(self.index)
+        # Registreer in index list
+        DynamicReflexAgent.team_indices.append(self.index)
 
         # Geef de rollen:
         # eerste agent → offensive, tweede → defensive
-       if len(DynamicReflexAgent.shared_roles) == 0:
+        if len(DynamicReflexAgent.shared_roles) == 0:
             DynamicReflexAgent.shared_roles[self.index] = 'offensive'
-       else:
+        else:
             DynamicReflexAgent.shared_roles[self.index] = 'defensive'
 
 
@@ -551,8 +576,19 @@ class DynamicReflexAgent(ReflexCaptureAgent):
             self.prev_pos != self.start and
             DynamicReflexAgent.shared_roles.get(self.index) == 'offensive'):
             self._swap_roles()
-
         self.prev_pos = my_pos
+
+        score = self.get_score(game_state)
+        moves_left = game_state.data.timeleft // 4
+        food_list = self.get_food(game_state).as_list()
+
+        # Dit werkt niet goed :C
+        #if score > len(food_list) / 2: # Als we winnen met meer dan de helft van het eten, gaan beide agents defensive spelen
+        #    DynamicReflexAgent.shared_roles[self.index] = 'defensive'
+            
+        #if score < 0 and moves_left < 60: # Als we verliezen en de tijd is bijna op, gaan we beide in attack (niet getest)
+        #    DynamicReflexAgent.shared_roles[self.index] = 'offensive'
+
         return super().choose_action(game_state)
 
     # Nu gebruiken we rechtstreeks onze andere bestaande klassen, maar als we die niet meer gebruiken kan alle code in deze klasse (is conceptueel dan logischer)
