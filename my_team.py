@@ -142,9 +142,9 @@ class ReflexCaptureAgent(CaptureAgent):
         actions = game_state.get_legal_actions(self.index)
 
         # You can profile your evaluation time by uncommenting these lines
-        # start = time.time()
+        #start = time.time()
         values = [self.evaluate(game_state, a) for a in actions]
-        # print('eval time for agent %d: %.4f' % (self.index, time.time() - start))
+        #print('eval time for agent %d: %.4f' % (self.index, time.time() - start))
 
         max_value = max(values)
         best_actions = [a for a, v in zip(actions, values) if v == max_value]
@@ -200,6 +200,48 @@ class ReflexCaptureAgent(CaptureAgent):
         a counter or a dictionary.
         """
         return {'successor_score': 1.0}
+    
+    def get_a_star_distance(self, start_pos, goal_pos, game_state): # A* die straft op hoe dichtbij we bij een ghost zijn
+        opponents = [game_state.get_agent_state(opponent) for opponent in self.get_opponents(game_state)]
+        ghost_positions = [
+            ghost.get_position() 
+            for ghost in opponents
+            if not ghost.is_pacman and 
+            ghost.get_position() is not None and 
+            ghost.scared_timer == 0
+        ]
+        agenda = util.PriorityQueue()
+        agenda.push((start_pos, 0), 0)
+        already_visited = {start_pos: 0}
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)] # alle mogelijke moves
+
+        while True:
+            if agenda.is_empty():
+                return []
+
+            current_pos, current_cost = agenda.pop()
+
+            if current_pos == goal_pos:
+                return current_cost
+
+            for dx, dy in directions:
+                next_pos = (int(current_pos[0] + dx), int(current_pos[1] + dy))
+                if not game_state.has_wall(next_pos[0], next_pos[1]):
+                    step_cost = 1 
+                    for ghost_pos in ghost_positions:
+                        dist_to_ghost = self.get_maze_distance(next_pos, ghost_pos)
+                        if dist_to_ghost <= 2:
+                            step_cost += 1000
+                        elif dist_to_ghost == 3:
+                            step_cost += 100
+
+                    total_cost = current_cost + step_cost
+                    heuristic = util.manhattan_distance(next_pos, goal_pos)
+                    estimated_total_cost = total_cost + heuristic
+
+                    if next_pos not in already_visited or total_cost < already_visited[next_pos]:
+                            already_visited[next_pos] = total_cost
+                            agenda.push((next_pos, total_cost), estimated_total_cost)
 
 
 class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Approximate Agent (code lijkt daar beetje op)
@@ -212,19 +254,19 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
     def get_features(self, game_state, action):
         features = util.Counter()
         successor = self.get_successor(game_state, action)
-        food_list = self.get_food(successor).as_list()
-        capsule_list = self.get_capsules(successor)
-        opponents_list = [successor.get_agent_state(opponent) for opponent in self.get_opponents(successor)]
-        ghost_within_5_list = [
+        food_dots = self.get_food(successor).as_list()
+        capsules = self.get_capsules(successor)
+        opponents = [successor.get_agent_state(opponent) for opponent in self.get_opponents(successor)]
+        ghost_within_5 = [
             ghost 
-            for ghost in opponents_list
+            for ghost in opponents
             if not ghost.is_pacman and
             ghost.get_position() is not None and 
             ghost.scared_timer == 0
         ] # Misschien beter als we zo typen wanneer tekst niet meer op het scherm past?
-        scared_ghosts_list = [
+        scared_ghosts = [
             ghost 
-            for ghost in opponents_list
+            for ghost in opponents
             if not ghost.is_pacman and
             ghost.get_position() is not None and 
             ghost.scared_timer > 0
@@ -234,7 +276,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
         my_pos = agent.get_position()
 
         # Om food op te eten
-        features['remaining_food'] = len(food_list)  # self.get_score(successor)
+        features['remaining_food'] = len(food_dots)  # self.get_score(successor)
 
         width = game_state.data.layout.width
         height = game_state.data.layout.height
@@ -242,22 +284,23 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
         if self.red:
             middle = middle - 1 # middle is het einde van ons eigen territorium, dus waar pacman terug een spookje wordt
         middle_positions = [(middle, h) for h in range(1, height) if not game_state.has_wall(middle, h)] # Als je maze distance berekent met een positie waar een wall is wordt blijkbaar een error gethrowd
-        distances_to_home = [self.get_maze_distance(my_pos, pos) for pos in middle_positions] 
-        features['distance_to_home'] = min(distances_to_home) # Kortste pad naar positie waar we weer ghost worden
+        distances_to_home = [self.get_maze_distance(my_pos, pos) for pos in middle_positions] # geen A* want te veel compute
+        closest_border_point = middle_positions[distances_to_home.index(min(distances_to_home))]
+        features['distance_to_home'] = self.get_a_star_distance(my_pos, closest_border_point, successor) # Kortste pad naar border terwijl we de ghost vermijden met A*
 
         # Compute distance to the nearest food
-        if len(food_list) > 0:  # This should always be True,  but better safe than sorry
-            min_food_distance = min([self.get_maze_distance(my_pos, food) for food in food_list])
+        if len(food_dots) > 0:  # This should always be True,  but better safe than sorry
+            min_food_distance = min([self.get_a_star_distance(my_pos, food, successor) for food in food_dots])
             features['distance_to_food'] = min_food_distance
 
         # Compute distance to the nearest capsule (lekker voor als de ghost dichtbij is)
-        if len(capsule_list) > 0:
-            min_capsule_distance = min([self.get_maze_distance(my_pos, capsule) for capsule in capsule_list])
+        if len(capsules) > 0:
+            min_capsule_distance = min([self.get_a_star_distance(my_pos, capsule, successor) for capsule in capsules])
             #if min_capsule_distance <= 10:
             features['distance_to_capsule'] = min_capsule_distance
             # else: features['distance_to_capsule'] = 11 # Anders zal die altijd verder dan 10 willen blijven omdat er geen negatieve reward is
             # in plaats van die 11 gewoon de weight verlagen van capsule? want is beetje hardcoded
-        features['remaining_capsules'] = len(capsule_list)
+        features['remaining_capsules'] = len(capsules)
 
         # Doodgaan is heel slechttt (dat wist pacman niet als hij zat in de tunnel, hij begon daar gewoon te chillen)
         current_pos = game_state.get_agent_state(self.index).get_position()
@@ -267,8 +310,8 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
         
         # Compute distance to the nearest ghost within Manhattan distance 5
         # Als de ghosts scared zijn, hoeven we er niet van weg te gaan (maar mss als de timer net gedaan gaat zijn wel, kunnen we nog verbeteren)
-        if len(ghost_within_5_list) > 0 and features['death'] == 0: # Weglopen is alleen belangrijk als we levend kunnen blijven (en dus niet vastzitten in een tunnel)
-            min_ghost_distance = min([self.get_maze_distance(my_pos, ghost.get_position()) for ghost in ghost_within_5_list])
+        if len(ghost_within_5) > 0 and features['death'] == 0: # Weglopen is alleen belangrijk als we levend kunnen blijven (en dus niet vastzitten in een tunnel)
+            min_ghost_distance = min([self.get_maze_distance(my_pos, ghost.get_position()) for ghost in ghost_within_5])
             features['distance_to_ghost'] = 1 / min_ghost_distance  # 1/ want pacman bij die positieve reward/weight probeerde pacman die 5 distance te houden, 1/ is dus beter met negatieve reward/weight
 
         # Compute distance to the nearest invader while being a ghost
@@ -276,7 +319,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
         features['invader_distance'] = 0
         features['ate_invader'] = 0
         if not agent.is_pacman:
-            invaders = [a for a in opponents_list if a.is_pacman and a.get_position() is not None]
+            invaders = [a for a in opponents if a.is_pacman and a.get_position() is not None]
             if len(invaders) > 0:
                 min_invader_distance = min([self.get_maze_distance(my_pos, invader.get_position()) for invader in invaders])
                 if agent.scared_timer > 0:
@@ -284,16 +327,16 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
                 else:
                     features['invader_distance'] = min_invader_distance
 
-            for opponent in opponents_list:
+            for opponent in opponents:
                 if opponent.is_pacman and opponent.get_position() is not None:
                     if my_pos == opponent.get_position() and agent.scared_timer == 0:
                         features['ate_invader'] = 1
 
 
         # Compute distance to the nearest scared ghost
-        if len(scared_ghosts_list) > 0:
-            min_scared_ghost_distance = min([self.get_maze_distance(my_pos, ghost.get_position()) for ghost in scared_ghosts_list])
-            closest_scared_ghost = [ghost for ghost in scared_ghosts_list if self.get_maze_distance(my_pos, ghost.get_position()) == min_scared_ghost_distance][0]
+        if len(scared_ghosts) > 0:
+            min_scared_ghost_distance = min([self.get_maze_distance(my_pos, ghost.get_position()) for ghost in scared_ghosts])
+            closest_scared_ghost = [ghost for ghost in scared_ghosts if self.get_maze_distance(my_pos, ghost.get_position()) == min_scared_ghost_distance][0]
             if closest_scared_ghost.scared_timer > min_scared_ghost_distance + 2: # Genoeg tijd geven om de ghost te eten
                 features['distance_to_scared_ghost'] = min_scared_ghost_distance
             else:
@@ -331,7 +374,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
             current_dist_to_entrance = self.get_maze_distance(current_pos, entrance)
             escaping = successor_dist_to_entrance < current_dist_to_entrance
             
-            for opponent in opponents_list:
+            for opponent in opponents:
                 if opponent.is_pacman or opponent.scared_timer > 0:
                     continue # We gaan verder met de volgende opponent in de list want deze opponent kan ons niet aanvallen
 
@@ -344,15 +387,15 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
                     features["dead_end_tunnel"] = 1
                     break # Als 1 ghost ons gaat killen in de tunnel, zijn we dood en is de loop klaar
         
-        # Niet kunnen testen met domme baseline :')
-        features['teammate_distance_penalty'] = 0 # Zodat onze twee attackers niet dezelfde richting op gaan
+        # Niet kunnen testen met domme baseline :') dit wordt hem niet, denk dat we dit beter weglaten
+        '''features['teammate_distance_penalty'] = 0 # Zodat onze twee attackers niet dezelfde richting op gaan
         teammates = [game_state.get_agent_state(i) for i in self.get_team(successor) if i != self.index]
         
         for teammate in teammates:
             if teammate.get_position() is not None:
                 dist = self.get_maze_distance(my_pos, teammate.get_position())
                 if dist <= 3:
-                    features['teammate_distance_penalty'] = 1
+                    features['teammate_distance_penalty'] = 1'''
 
 
         if action == Directions.STOP: features['stop'] = 1
@@ -364,25 +407,31 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
 
     def get_weights(self, game_state, action):
         successor = self.get_successor(game_state, action)
-        inventory_space = successor.get_agent_state(self.index).num_carrying
-        food_list = self.get_food(game_state).as_list()
+        food_carrying = successor.get_agent_state(self.index).num_carrying
+        food_dots = self.get_food(game_state).as_list()
  
         # Dit hieronder toegevoegd zodat als hij een kill maakt, hij niet instant naar huis gaat om zijn food binnen te brengen,
         # maar eerst nog zoveel mogelijk food gaat halen
-        opponents_list = [successor.get_agent_state(opponent) for opponent in self.get_opponents(successor)]
-        ghost_within_5_list = [
+        opponents = [successor.get_agent_state(opponent) for opponent in self.get_opponents(successor)]
+        ghost_within_5 = [
             ghost 
-            for ghost in opponents_list
+            for ghost in opponents
             if not ghost.is_pacman and
             ghost.get_position() is not None and 
             ghost.scared_timer == 0
         ]
-        if len(ghost_within_5_list) > 0 and inventory_space > 0:
-            distance_to_home_weight = -(inventory_space * 2) # Als we food hebben en ghost is dichtbij, snel naar huis
-        elif inventory_space >= len(food_list) - 2: # Naar huis gaan wanneer we max food hebben om te winnen
+        if len(ghost_within_5) > 0 and food_carrying > 0:
+            distance_to_home_weight = -200 -(food_carrying * 10) # Als we food hebben en ghost is dichtbij, snel naar huis
+        elif food_carrying >= len(food_dots) - 2: # Naar huis gaan wanneer we max food hebben om te winnen
             distance_to_home_weight = -5 # Net iets meer dan distance_to_food 
         else: 
             distance_to_home_weight = 0 # Niemand in de buurt, dus zoveel mogelijk eten
+        
+        stop_weight = -2
+        reverse_weight = -3
+        if len(ghost_within_5) > 0:
+            stop_weight = -100
+            reverse_weight = -50 # zodat hij een manier vindt om rond te gaan wanneer hij blijft cirkelen met de enemy bij de border
 
         return {'remaining_food': -200, # Minimaliseer resterende food (dus eet food)
                 'distance_to_food': -4, # Minimaliseer afstand naar de dichtste food dot
@@ -392,14 +441,14 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
                 'invader_distance': -8,
                 'ate_invader': 500,
                 'distance_to_ghost': -100, # Hoe dichter de ghost van die 5 distance, hoe negatiever de q-value 
-                'distance_to_scared_ghost': -2, # Zodat als hij de kans krijgt, dat hij die wel echt neemt
+                'distance_to_scared_ghost': -15, # Zodat als hij de kans krijgt, dat hij die wel echt neemt
                 'ate_scared_ghost': 500,
                 #'teammate_distance_penalty': -15,
                 'final_sprint': -10000,
                 'death': -10000, 
                 'dead_end_tunnel': -10001, # Nu weet hij zeker dat dit een slechte state is
-                'stop': -2, # zodat hij een manier vindt om rond te gaan wanneer hij blijft cirkelen met de enemy bij de border
-                'reverse': -3}
+                'stop': stop_weight, 
+                'reverse': reverse_weight}
     # De weights kunnen wrs nog veel beter !
 
 
@@ -472,7 +521,7 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
             min_dist = min(dists)
             if my_state.scared_timer > 0:
                 if my_state.scared_timer <= 2: # Als de scared timer bijna op is, willen we de enemy killen
-                    features['invader_distance'] = min_dist
+                    features['invader_distance_while_scared'] = abs(min_dist - 1) # soms ging hij in de enemy vlak voordat hij unscared ging
                 else: # Anders blijven we op 3 afstand om hem daarna zo snel mogelijk te kunnen killen
                     features['invader_distance_while_scared'] = abs(min_dist - 3)
             else:
@@ -530,7 +579,6 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
                 # 'wrong_defender_side': -10
                 } 
     
-    
 class DynamicReflexAgent(ReflexCaptureAgent):
     # Klasse variabelen (gemeenschappelijk voor alle instanties)
     shared_roles = {}   # { agent_index: 'offensive' | 'defensive' }
@@ -580,10 +628,10 @@ class DynamicReflexAgent(ReflexCaptureAgent):
 
         score = self.get_score(game_state)
         moves_left = game_state.data.timeleft // 4
-        food_list = self.get_food(game_state).as_list()
+        food_dots = self.get_food(game_state).as_list()
 
-        # Dit werkt niet goed :C
-        #if score > len(food_list) / 2: # Als we winnen met meer dan de helft van het eten, gaan beide agents defensive spelen
+        # Dit werkt niet goed :C zou het niet meer implementeren eigenlijk
+        #if score > len(food_dots) / 2: # Als we winnen met meer dan de helft van het eten, gaan beide agents defensive spelen
         #    DynamicReflexAgent.shared_roles[self.index] = 'defensive'
             
         #if score < 0 and moves_left < 60: # Als we verliezen en de tijd is bijna op, gaan we beide in attack (niet getest)
