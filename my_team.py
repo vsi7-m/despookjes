@@ -257,12 +257,15 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
         food_dots = self.get_food(successor).as_list()
         capsules = self.get_capsules(successor)
         opponents = [successor.get_agent_state(opponent) for opponent in self.get_opponents(successor)]
+        agent = successor.get_agent_state(self.index)
+        my_pos = agent.get_position()
         ghost_within_5 = [
             ghost 
             for ghost in opponents
             if not ghost.is_pacman and
             ghost.get_position() is not None and 
-            ghost.scared_timer == 0
+            ghost.scared_timer == 0 and
+            self.get_maze_distance(my_pos, ghost.get_position()) <= 5 # muren in rekening houden
         ] # Misschien beter als we zo typen wanneer tekst niet meer op het scherm past?
         scared_ghosts = [
             ghost 
@@ -271,9 +274,6 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
             ghost.get_position() is not None and 
             ghost.scared_timer > 0
         ]
-
-        agent = successor.get_agent_state(self.index)
-        my_pos = agent.get_position()
 
         # Om food op te eten
         features['remaining_food'] = len(food_dots)  # self.get_score(successor)
@@ -409,6 +409,8 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
         successor = self.get_successor(game_state, action)
         food_carrying = successor.get_agent_state(self.index).num_carrying
         food_dots = self.get_food(game_state).as_list()
+        capsules = self.get_capsules(game_state)
+        my_pos = successor.get_agent_state(self.index).get_position()
  
         # Dit hieronder toegevoegd zodat als hij een kill maakt, hij niet instant naar huis gaat om zijn food binnen te brengen,
         # maar eerst nog zoveel mogelijk food gaat halen
@@ -418,7 +420,8 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
             for ghost in opponents
             if not ghost.is_pacman and
             ghost.get_position() is not None and 
-            ghost.scared_timer == 0
+            ghost.scared_timer == 0 and
+            self.get_maze_distance(my_pos, ghost.get_position()) <= 5 # muren in rekening houden
         ]
         if len(ghost_within_5) > 0 and food_carrying > 0:
             distance_to_home_weight = -200 -(food_carrying * 10) # Als we food hebben en ghost is dichtbij, snel naar huis
@@ -429,22 +432,29 @@ class OffensiveReflexAgent(ReflexCaptureAgent): # inspiratie van de slides Appro
         
         stop_weight = -2
         reverse_weight = -3
+        capsule_weight = -2
         if len(ghost_within_5) > 0:
             stop_weight = -100
             reverse_weight = -50 # zodat hij een manier vindt om rond te gaan wanneer hij blijft cirkelen met de enemy bij de border
+            if len(capsules) > 0:
+                min_ghost_dist = min([self.get_maze_distance(my_pos, ghost.get_position()) for ghost in ghost_within_5])
+                min_capsule_dist = min([self.get_maze_distance(my_pos, cap) for cap in capsules])
+                if min_capsule_dist <= min_ghost_dist + 1: # Als we naar de capsule kunnen gaan voor de ghost
+                    capsule_weight = -150       # Pak de capsule snel
+                    distance_to_home_weight = 0 # ipv naar huis te gaan
 
         return {'remaining_food': -200, # Minimaliseer resterende food (dus eet food)
                 'distance_to_food': -4, # Minimaliseer afstand naar de dichtste food dot
                 'distance_to_home': distance_to_home_weight, # Probeer naar huis te gaan wnr je veel food draagt
-                'distance_to_capsule': -2,
+                'distance_to_capsule': capsule_weight,
                 'remaining_capsules': -301,
                 'invader_distance': -8,
                 'ate_invader': 500,
                 'distance_to_ghost': -100, # Hoe dichter de ghost van die 5 distance, hoe negatiever de q-value 
                 'distance_to_scared_ghost': -15, # Zodat als hij de kans krijgt, dat hij die wel echt neemt
-                'ate_scared_ghost': 500,
+                'ate_scared_ghost': 1000, #??????? idk waarom dit het niet fixt
                 #'teammate_distance_penalty': -15,
-                'final_sprint': -10000,
+                'final_sprint': -1000,
                 'death': -10000, 
                 'dead_end_tunnel': -10001, # Nu weet hij zeker dat dit een slechte state is
                 'stop': stop_weight, 
@@ -544,7 +554,7 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
                     if my_pos == invader.get_position():
                         features['ate_invader'] = 1
 
-        features['wrong_defender_side'] = 0 # Verdelen de twee defenders over de bovenste en onderste helft
+        '''features['wrong_defender_side'] = 0 # Verdelen de twee defenders over de bovenste en onderste helft
         if len(invaders) == 0 and self.missing_food_dot is None:
             my_team = self.get_team(successor)
             top_defender = (self.index == min(my_team))
@@ -554,7 +564,27 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
             if top_defender and y < middle_height: # Als ik de top defender ben, maar ik zit op de onderste helft
                 features['wrong_defender_side'] = 1
             elif not top_defender and y >= middle_height: # Als ik de bottom defender ben, maar ik zit op de bovenste helft
-                features['wrong_defender_side'] = 1
+                features['wrong_defender_side'] = 1'''
+        
+        features["dead_end_tunnel"] = 0 # dead-end feature toegevoegd voor onze scared defender
+        current_pos = game_state.get_agent_state(self.index).get_position()
+
+        if my_state.scared_timer > 0 and my_pos in self.dead_end_tunnels:
+            entrance, depth = self.dead_end_tunnels[my_pos]
+
+            successor_dist_to_entrance = self.get_maze_distance(my_pos, entrance)
+            current_dist_to_entrance = self.get_maze_distance(current_pos, entrance)
+            escaping = successor_dist_to_entrance < current_dist_to_entrance
+            
+            for invader in invaders:
+                invader_pos = invader.get_position()
+                if invader_pos is None: 
+                    continue 
+                
+                invader_dist_to_entrance = self.get_maze_distance(invader_pos, entrance)
+                if invader_dist_to_entrance <= successor_dist_to_entrance + depth and not escaping: 
+                    features["dead_end_tunnel"] = 1
+                    break
 
         if action == Directions.STOP: features['stop'] = 1
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
@@ -576,6 +606,7 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
                 'sum_distance_to_food': -0.1,
                 'distance_to_capsule': -0.2,
                 'distance_to_closest_boundary': -1,
+                'dead_end_tunnel': -10000,
                 # 'wrong_defender_side': -10
                 } 
     
