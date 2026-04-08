@@ -23,7 +23,7 @@ Vervolgens raden we aan om de huidige repo (degene waar je nu de README van lees
 ```
 capture-the-flag/
 ├─ agents/
-│  └─ [naam van deze repo]/
+│  └─ despookjes/
 │     ├─ my_team.py
 │     └─ README.md
 ⋮
@@ -34,5 +34,5 @@ capture-the-flag/
 
 Vervolgens kan je vanuit de `capture-the-flag` directory jouw agents (bijvoorbeeld als het rode team) laten spelen:
 ```bash
-python capture.py -r agents/[naam-van-deze-repo]/my_team.py
+python capture.py -r agents/despookjes/my_team.py
 ```

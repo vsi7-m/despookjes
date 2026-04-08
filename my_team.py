@@ -629,12 +629,16 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
                 } 
     
 class DynamicReflexAgent(ReflexCaptureAgent):
+    """
+    Een dynamische agent die van rol (offensive/defensive) kan wisselen tijdens de game.
+    """
     # Klasse variabelen (gemeenschappelijk voor alle instanties)
     shared_roles = {}   # { agent_index: 'offensive' | 'defensive' }
     team_indices = []   # [first_index, second_index], geïnitialiseerd in register_initial_state
 
     def register_initial_state(self, game_state):
-        if len(DynamicReflexAgent.team_indices) >= 2: # Als we meerdere games met 1 python commando runnen, moeten we de team_indices lijst telkens resetten
+        # Als we meerdere games met 1 python commando runnen, moeten we de team_indices lijst telkens resetten
+        if len(DynamicReflexAgent.team_indices) >= 2: 
             DynamicReflexAgent.team_indices = [] 
             DynamicReflexAgent.shared_roles = {} 
         super().register_initial_state(game_state)
@@ -643,8 +647,7 @@ class DynamicReflexAgent(ReflexCaptureAgent):
 
         DynamicReflexAgent.team_indices.append(self.index) # Registreer jezelf in de index list
 
-        # Geef de rollen:
-        # eerste agent → offensive, tweede → defensive
+        # Geef de rollen: eerste agent wordt offensive, tweede wordt defensive
         if len(DynamicReflexAgent.shared_roles) == 0:
             DynamicReflexAgent.shared_roles[self.index] = 'offensive'
         else:
@@ -652,13 +655,18 @@ class DynamicReflexAgent(ReflexCaptureAgent):
 
 
     def get_teammate_index(self):
+        """
+        Zoekt en returnt de index van de teammate.
+        """
         for idx in DynamicReflexAgent.team_indices:
             if idx != self.index:
                 return idx
 
-    # Swapt de rollen. Als alternatief konden we een methode schrijven die voor 1 agent de rol verandert zodat ze bvb. allebei offensive worden.
     def swap_roles(self):
-        """Called wanneer de agent sterft. Deze wordt dan defensive; de teammate wordt offensive."""
+        """
+        Swapt de rollen.
+        Called wanneer de agent sterft. Deze wordt dan defensive; de teammate wordt offensive.
+        """
         DynamicReflexAgent.shared_roles[self.index] = 'defensive'
         teammate = self.get_teammate_index()
         DynamicReflexAgent.shared_roles[teammate] = 'offensive'
@@ -674,7 +682,6 @@ class DynamicReflexAgent(ReflexCaptureAgent):
 
         return super().choose_action(game_state)
 
-    # Nu gebruiken we rechtstreeks onze andere bestaande klassen, maar als we die niet meer gebruiken kan alle code in deze klasse (is conceptueel dan logischer)
     def get_features(self, game_state, action):
         if DynamicReflexAgent.shared_roles.get(self.index) == 'offensive':
             return OffensiveReflexAgent.get_features(self, game_state, action)
